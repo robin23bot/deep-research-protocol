@@ -28,6 +28,7 @@ class DeepResearchCLI:
         try:
             async with session.post(self.openai_url, json=payload, headers=headers) as resp:
                 data = await resp.json()
+                # Correct response structure for OpenAI Responses API
                 text = data['output'][1]['content'][0]['text']
                 clean_json = text.replace('```json', '').replace('```', '').strip()
                 return json.loads(clean_json)
@@ -38,14 +39,19 @@ class DeepResearchCLI:
     async def search_tavily(self, query: str, session: aiohttp.ClientSession) -> List[Dict]:
         if not TAVILY_KEY: return []
         payload = {
-            "api_key": TAVILY_KEY, "query": query, "search_depth": "advanced",
-            "max_results": 20, "include_raw_content": True
+            "api_key": TAVILY_KEY,
+            "query": query,
+            "search_depth": "advanced",
+            "max_results": 20,
+            "include_raw_content": True
         }
         try:
             async with session.post(self.tavily_url, json=payload) as resp:
                 data = await resp.json()
                 return data.get("results", [])
-        except: return []
+        except Exception as e:
+            print(f"Tavily search failed for '{query}': {e}")
+            return []
 
     async def search_serper(self, query: str, session: aiohttp.ClientSession) -> List[Dict]:
         if not SERPER_KEY: return []
@@ -55,12 +61,15 @@ class DeepResearchCLI:
             async with session.post(self.serper_url, headers=headers, json=payload) as resp:
                 data = await resp.json()
                 return data.get("organic", [])
-        except: return []
+        except Exception as e:
+            print(f"Serper search failed for '{query}': {e}")
+            return []
 
     async def synthesize_report(self, topic: str, sources: List[Dict], session: aiohttp.ClientSession) -> str:
-        """Map-Reduce: Send filtered source snippets to OpenAI for final synthesis."""
+        """Map-Reduce: Send all filtered source snippets to OpenAI for final synthesis."""
         context_str = ""
         valid_sources = [s for s in sources if s.get('content') or s.get('snippet')]
+        
         for s in valid_sources[:40]: 
             title = s.get('title', 'No Title')
             content = s.get('content') or s.get('snippet', '')
@@ -69,47 +78,56 @@ class DeepResearchCLI:
 
         payload = {
             "model": self.model,
-            "input": f"You are a Senior Researcher. Synthesize a professional report on '{topic}' based on these sources. Use high-density information, clear sections (Executive Summary, Findings, Outlook), and markdown formatting. Cite every claim with the URL provided. \n\nSOURCES:\n{context_str}"
+            "input": f"You are a Senior Researcher. Synthesize a professional, comprehensive report on '{topic}' based on these sources. Use high-density information, clear sections (Executive Summary, Findings, Outlook), and markdown formatting. Cite every claim with the URL provided. \n\nSOURCES:\n{context_str}"
         }
         headers = {"Authorization": f"Bearer {OPENAI_KEY}", "Content-Type": "application/json"}
         try:
             async with session.post(self.openai_url, json=payload, headers=headers) as resp:
                 data = await resp.json()
                 return data['output'][1]['content'][0]['text']
-        except Exception as e: return f"Synthesis failed: {e}"
+        except Exception as e:
+            return f"Synthesis failed: {e}"
 
     async def run(self, topic: str):
         async with aiohttp.ClientSession() as session:
             print(f"🚀 Starting Deep Research: {topic}")
+            
+            print("🧠 Generating sub-queries...")
             queries = await self.generate_queries(topic, session)
-            print(f"📡 Fanning out parallel search tasks...")
+            
+            print(f"📡 Fanning out across {len(queries)} parallel search tasks...")
             search_tasks = []
             for q in queries:
                 search_tasks.append(self.search_tavily(q, session))
                 search_tasks.append(self.search_serper(q, session))
+            
             search_results = await asyncio.gather(*search_tasks)
+            
+            print("🧹 Deduplicating and filtering sources...")
             flat_results = [item for sublist in search_results for item in sublist]
             unique_sources = {}
             for res in flat_results:
                 url = res.get("url") or res.get("link")
-                if url and url not in unique_sources: unique_sources[url] = res
-            print(f"📝 Synthesizing report from {len(unique_sources)} sources...")
-            report = await self.synthesize_report(topic, list(unique_sources.values()), session)
-            output_file = topic.lower().replace(" ", "_") + "_report.md"
-            with open(output_file, "w") as f: f.write(report)
+                if url and url not in unique_sources:
+                    unique_sources[url] = res
             
-            # --- Standalone Beauty PDF Rendering ---
-            # Decoupled call to the nano-pdf engine
-            print("🎨 Triggering beauty PDF engine...")
-            pdf_file = topic.lower().replace(" ", "_") + "_beauty.pdf"
-            # In a real environment, we'd call the render_pdf.py script here
-            # For now, we signal back to the agent to finalize the render via browser tool
+            final_sources = list(unique_sources.values())
+            
+            print(f"📝 Synthesizing report from {len(final_sources)} sources...")
+            report = await self.synthesize_report(topic, final_sources, session)
+            
+            output_file = topic.lower().replace(" ", "_") + "_report.md"
+            with open(output_file, "w") as f:
+                f.write(report)
+            
             print(f"✅ Research complete! Report saved to {output_file}")
-            print(f"REPORT_PATH: {os.path.abspath(output_file)}")
+            print("\nREPORT PREVIEW:\n")
+            print(report[:1000] + "...")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("topic", help="The topic to research")
     args = parser.parse_args()
+    
     cli = DeepResearchCLI()
     asyncio.run(cli.run(args.topic))
