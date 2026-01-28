@@ -69,7 +69,7 @@ class DeepResearchCLI:
 
         payload = {
             "model": self.model,
-            "input": f"You are a Senior Researcher. Synthesize a professional report on '{topic}' based on these sources. Use high-density information, clear sections (Executive Summary, Findings, Outlook), and markdown formatting. Cite every claim with the URL provided. \n\nSOURCES:\n{context_str}"
+            "input": f"You are a Senior Technical Lead writing for a high-performance Boss. Synthesize a professional report on '{topic}' based on these sources. \n\nVOICE REQUIREMENTS:\n- Be conversational but sharp (no corporate filler).\n- Use direct, first-person perspective ('I found...', 'I recommend').\n- Avoid 'robotic' AI patterns (no 'In conclusion', 'it is important to note').\n- Use strong opinions and clear trade-offs.\n- Format with clear sections and citations.\n\nSOURCES:\n{context_str}"
         }
         headers = {"Authorization": f"Bearer {OPENAI_KEY}", "Content-Type": "application/json"}
         try:
